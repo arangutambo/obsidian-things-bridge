@@ -1,0 +1,25 @@
+{
+	"name": "obsidian-things-bridge",
+	"version": "0.2.0",
+	"description": "A Things 3 window beside your notes: Today, upcoming deadlines and projects, with to-dos linked back to their notes, and a quick draft for sending a note to Things.",
+	"main": "main.js",
+	"scripts": {
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"dev": "node esbuild.config.mjs",
+		"test": "vitest run",
+		"typecheck": "tsc -noEmit -skipLibCheck",
+		"lint": "eslint ."
+	},
+	"license": "MIT",
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"@types/node": "^20.12.7",
+		"esbuild": "^0.25.12",
+		"eslint": "^10.8.1",
+		"eslint-plugin-obsidianmd": "^0.4.1",
+		"obsidian": "^1.13.1",
+		"typescript": "^5.4.5",
+		"typescript-eslint": "^8.67.0",
+		"vitest": "^3.2.7"
+	}
+}

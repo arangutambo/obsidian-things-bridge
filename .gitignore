@@ -1,0 +1,9 @@
+node_modules/
+main.js
+*.js.map
+.*.cjs
+data.json
+# Private: real course material used by local tests, and planning notes quoting the vault.
+test/private/
+DESIGN.md
+.DS_Store
