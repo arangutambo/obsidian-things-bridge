@@ -29,9 +29,13 @@ interface Prefs {
 	projectsOpenIn: "tab" | "split";
 	/** The window's last tab. */
 	tab: "today" | "projects";
+	/** Show projects scheduled for today among Today's to-dos (otherwise only in the Projects tab). */
+	projectsInToday: boolean;
+	/** The area the main window shows; empty for all. */
+	defaultArea: string;
 }
 
-const DEFAULTS: Prefs = { deadlineDays: 7, refreshMinutes: 3, leadDays: 2, nextCount: 3, groupBy: "project", groupsOpen: false, projectsOpenIn: "tab", tab: "today" };
+const DEFAULTS: Prefs = { deadlineDays: 7, refreshMinutes: 3, leadDays: 2, nextCount: 3, groupBy: "project", groupsOpen: false, projectsOpenIn: "tab", tab: "today", projectsInToday: false, defaultArea: "" };
 
 /** Extra context for a draft: the course it belongs to, so the right project can be found. */
 export interface SendContext extends DraftContext {
@@ -82,6 +86,7 @@ export default class ThingsBridge extends Plugin {
 		this.addCommand({ id: "open-window", name: "Open Things window", callback: () => void this.openWindow() });
 		this.addCommand({ id: "send", name: "Send to Things…", callback: () => this.send() });
 		this.addCommand({ id: "open-project", name: "Open a Things project…", callback: () => void this.pickProject() });
+		this.addCommand({ id: "open-area", name: "Open a Things window for one area…", callback: () => void this.pickArea() });
 	}
 
 	async save(): Promise<void> {
@@ -278,6 +283,35 @@ export default class ThingsBridge extends Plugin {
 		await this.openProject(p?.id ?? null, title);
 	}
 
+	/** A window kept to one area, beside the main one; reused if it is already open. */
+	async openAreaWindow(area: string): Promise<void> {
+		const { workspace } = this.app;
+		const existing = workspace.getLeavesOfType(VIEW_TYPE).find((l) => l.view instanceof ThingsView && l.view.pinnedArea === area);
+		if (existing) {
+			await workspace.revealLeaf(existing);
+			return;
+		}
+		const leaf = workspace.getRightLeaf(true);
+		if (!leaf) return;
+		await leaf.setViewState({ type: VIEW_TYPE, state: { pinned: true, area }, active: true });
+		await workspace.revealLeaf(leaf);
+	}
+
+	private async pickArea(): Promise<void> {
+		let s: Snapshot;
+		try {
+			s = await this.read({ maxAge: 5 * 60_000 });
+		} catch (e) {
+			new Notice(explain(e), 8000);
+			return;
+		}
+		if (!s.running || !s.areas.length) {
+			new Notice(s.running ? "Things has no areas yet." : "Things isn't open. Open it, then try again.");
+			return;
+		}
+		new AreaPicker(this.app, s.areas, (a) => void this.openAreaWindow(a)).open();
+	}
+
 	private async pickProject(): Promise<void> {
 		let s: Snapshot;
 		try {
@@ -309,6 +343,23 @@ export default class ThingsBridge extends Plugin {
 		const file = this.app.metadataCache.getFirstLinkpathDest(path, "") ?? this.app.vault.getAbstractFileByPath(`${path}.md`);
 		if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
 		else new Notice(`The linked note “${path}” isn't in this vault any more.`);
+	}
+}
+
+class AreaPicker extends SuggestModal<string> {
+	constructor(app: App, private areas: string[], private onPick: (area: string) => void) {
+		super(app);
+		this.setPlaceholder("Which area?");
+	}
+	getSuggestions(q: string): string[] {
+		const s = q.toLowerCase();
+		return this.areas.filter((a) => a.toLowerCase().includes(s));
+	}
+	renderSuggestion(a: string, el: HTMLElement): void {
+		el.createDiv({ text: a });
+	}
+	onChooseSuggestion(a: string): void {
+		this.onPick(a);
 	}
 }
 
@@ -402,6 +453,44 @@ class BridgeSettings extends PluginSettingTab {
 						this.plugin.renderViews();
 					}),
 			);
+		new Setting(containerEl)
+			.setName("Show projects scheduled for today in Today")
+			.setDesc("Off: Today shows just to-dos, and scheduled projects are listed in the projects tab.")
+			.addToggle((t) =>
+				t.setValue(p.projectsInToday).onChange(async (v) => {
+					p.projectsInToday = v;
+					await this.plugin.save();
+					this.plugin.renderViews();
+				}),
+			);
+		const areas = this.plugin.snapshot?.data.areas ?? [];
+		const area = new Setting(containerEl)
+			.setName("Area shown in the Things window")
+			.setDesc("Everything, or one area's to-dos and projects. The filter at the top of the window changes the same setting. For more areas at once, open a window per area from the command palette.");
+		if (areas.length) {
+			area.addDropdown((d) =>
+				d
+					.addOption("", "All areas")
+					.addOptions(Object.fromEntries([...new Set([...areas, ...(p.defaultArea ? [p.defaultArea] : [])])].map((a) => [a, a])))
+					.setValue(p.defaultArea)
+					.onChange(async (v) => {
+						p.defaultArea = v;
+						await this.plugin.save();
+						this.plugin.renderViews();
+					}),
+			);
+		} else {
+			area.addText((t) =>
+				t
+					.setPlaceholder("All areas")
+					.setValue(p.defaultArea)
+					.onChange(async (v) => {
+						p.defaultArea = v.trim();
+						await this.plugin.save();
+						this.plugin.renderViews();
+					}),
+			);
+		}
 		new Setting(containerEl)
 			.setName("Groups start open")
 			.setDesc("Off keeps them folded to their names and counts, so the top tasks stay the focus.")

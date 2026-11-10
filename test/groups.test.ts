@@ -31,6 +31,7 @@ const s = parseSnapshot(
 		],
 		somedayIds: ["i", "P5"],
 		tagParents: { "🔬 BIO1000": "🎓 Courses", "🩺 MED1": "🎓 Courses", Errand: null, Reading: null },
+		areas: ["🎓 Uni", "🏠 Home", "🤑 Work"],
 	}),
 );
 
@@ -59,6 +60,25 @@ describe("grouping Today below the top tasks", () => {
 		expect(titles(g)).toEqual(["🎓 Courses(2)", "Errand(1)", "No tag(3)"]);
 		expect(titles(g[0].children)).toEqual(["🔬 BIO1000(1)", "🩺 MED1(1)"]);
 	});
+	it("keeps projects scheduled for today out of Today's to-dos", async () => {
+		const { windowOf } = await import("../src/core/model");
+		const w = windowOf({ ...s, today: [s.today[2], ...s.today] }, "2027-03-10", 7, 2);
+		expect(w.now?.id).toBe("a");
+		expect([w.now, ...w.next, ...w.later].some((x) => x?.isProject)).toBe(false);
+		expect(w.later.map((x) => x.id)).toEqual(["d", "e"]);
+		// …unless the setting puts them back.
+		expect(windowOf(s, "2027-03-10", 7, 10, true).next.some((x) => x.isProject)).toBe(true);
+	});
+	it("narrows everything to one area, through projects as well", async () => {
+		const { filterByArea } = await import("../src/core/model");
+		const uni = filterByArea(s, "🎓 Uni");
+		expect(uni.today.map((x) => x.id)).toEqual(["a", "P2", "c", "d", "e"]);
+		expect(uni.projects.map((p) => p.title)).toEqual(["🔬 BIO1000", "🎤 Talk", "🩺 MED1"]);
+		expect(uni.all.some((x) => x.id === "j")).toBe(false);
+		expect(filterByArea(s, "🏠 Home").today.map((x) => x.id)).toEqual(["b"]);
+		expect(filterByArea(s, null)).toBe(s);
+		expect(s.areas).toEqual(["🎓 Uni", "🏠 Home", "🤑 Work"]);
+	});
 	it("not at all, when you'd rather keep Things' plain order", () => {
 		expect(groupTodos(rest, "none", s)).toEqual([]);
 	});
@@ -68,8 +88,8 @@ describe("projects", () => {
 	it("lists the projects with something today, with counts and the nearest deadline", () => {
 		const p = projectsToday(s);
 		expect(p.map((x) => [x.title, x.today.length, x.scheduled, x.open, x.nextDeadline])).toEqual([
-			["🔬 BIO1000", 2, false, 6, "2027-03-18"],
 			["🎤 Talk", 0, true, 0, null],
+			["🔬 BIO1000", 2, false, 6, "2027-03-18"],
 			["🩺 MED1", 2, false, 2, null],
 		]);
 	});

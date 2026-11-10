@@ -90,7 +90,10 @@ export interface ProjectToday {
 	nextDeadline: string | null;
 }
 
-/** Projects with something in Today, in the order they first appear there. */
+/**
+ * Projects with something in Today, in the order they first appear there: those scheduled for
+ * today first (they show here, not among Today's to-dos), then those with to-dos in Today.
+ */
 export function projectsToday(s: Snapshot): ProjectToday[] {
 	const projects = new Map(s.projects.map((p) => [p.title, p]));
 	const out: ProjectToday[] = [];
@@ -108,7 +111,7 @@ export function projectsToday(s: Snapshot): ProjectToday[] {
 		if (t.isProject) row.scheduled = true;
 		else row.today.push(t);
 	}
-	return out;
+	return [...out.filter((r) => r.scheduled), ...out.filter((r) => !r.scheduled)];
 }
 
 /** Every other active project (not in Someday), by area in the order Things lists them. */

@@ -27,7 +27,7 @@ describe("reading Things", () => {
 		expect(s.all).toHaveLength(11);
 		expect(s.today[1]).toMatchObject({ tags: ["🔬 BIO1000", "Reading"], project: "🔬 BIO1000" });
 		expect(placeOf(s.today[0])).toBe("🎓 School");
-		expect(parseSnapshot(JSON.stringify({ v: 1, running: false }))).toEqual({ running: false, today: [], all: [], projects: [], someday: new Set(), tagParents: {} });
+		expect(parseSnapshot(JSON.stringify({ v: 1, running: false }))).toEqual({ running: false, today: [], all: [], projects: [], someday: new Set(), tagParents: {}, areas: [] });
 		expect(() => parseSnapshot(JSON.stringify({ v: 2 }))).toThrow();
 	});
 
@@ -38,7 +38,7 @@ describe("reading Things", () => {
 		expect(w.later.map((x) => x.id)).toEqual(["e", "f"]);
 		// Today's own deadline (j) is already in Things' Today; 20 March is past the 7-day window.
 		expect(w.deadlines.map((x) => [x.id, x.days])).toEqual([["h", 1], ["g", 2]]);
-		expect(windowOf({ running: true, today: [], all: [], projects: [], someday: new Set(), tagParents: {} }, "2027-03-10").now).toBeNull();
+		expect(windowOf({ running: true, today: [], all: [], projects: [], someday: new Set(), tagParents: {}, areas: [] }, "2027-03-10").now).toBeNull();
 	});
 
 	it("finds links back to notes, in this vault only", () => {

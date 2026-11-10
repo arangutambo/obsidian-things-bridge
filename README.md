@@ -8,11 +8,15 @@ nothing changes in Things that you haven't seen, and there are no counters or st
 
 ## The window
 
-Open it from the ribbon or **Open Things window**. It has two tabs.
+Open it from the ribbon or **Open Things window**. It has two tabs, and an area filter at the top:
+show everything, or one area's to-dos and projects. **Open a Things window for one area…** opens
+another window kept to one area, so you can have, say, study and life side by side.
 
 **Today**
 
-- **Now:** the first to-do in your Today, in the order you arranged it in Things.
+- **Now:** the first to-do in your Today, in the order you arranged it in Things. Today shows
+  to-dos only; projects scheduled for today are listed in the Projects tab (a setting puts them
+  back among the to-dos if you prefer).
 - **Next:** the few after it (three by default), still in your order.
 - **The rest of today**, grouped the way you choose in settings: by project, by area then project,
   by tag (under its parent tag), or not at all. Groups start folded to their names and counts, so
@@ -22,8 +26,8 @@ Open it from the ribbon or **Open Things window**. It has two tabs.
 
 **Projects**
 
-Every project with something in Today, with how many of its to-dos are in Today, how many are open,
-and its nearest deadline. Click one to open its **project view**: its to-dos under Today, Upcoming
+Projects scheduled for today first, then every project with to-dos in Today, with how many are in
+Today, how many are open, and the nearest deadline. Click one to open its **project view**: its to-dos under Today, Upcoming
 (by start date), Anytime, and Someday folded away, with a button to add a to-do to it. Other active
 projects are listed by area below. **Open a Things project…** opens any project's view directly.
 
@@ -46,6 +50,8 @@ strengthens it, writing it down alone doesn't (Sheeran et al., 2024).
 
 - **Top tasks after Now**, and how the **rest of Today is grouped** (project; area, then project;
   tag; or Things' plain order). Whether groups **start open**.
+- Whether **projects scheduled for today** also show among Today's to-dos.
+- The **area the window shows** (the filter at the top of the window changes the same setting).
 - Whether **project views** open in a new tab or a split beside your note.
 - How far ahead **deadlines** are listed, how often the window **refreshes** while visible, and the
   default **start reminder** before a deadline.

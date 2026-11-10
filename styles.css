@@ -56,3 +56,5 @@
 .things-bridge-peek { margin-top: var(--size-2-2); }
 .things-bridge-area { margin: var(--size-4-2) 0 var(--size-2-1); }
 .things-bridge-project-meta { margin-bottom: var(--size-4-2); }
+.things-bridge-filter { margin: var(--size-4-2) 0 0; }
+.things-bridge-filter select { max-width: 100%; }

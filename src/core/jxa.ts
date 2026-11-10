@@ -61,7 +61,9 @@ function run(argv) {
 		try { tp = tg.parentTag.name(); } catch (e) { tp = tn.map(() => null); }
 		tn.forEach((n, i) => { tagParents[n] = tp[i] || null; });
 	} catch (e) {}
-	return JSON.stringify({ v: 1, running: true, todayIds: today, all: rows, projects: projects, somedayIds: someday, tagParents: tagParents });
+	let areas = [];
+	try { areas = app.areas.name(); } catch (e) {}
+	return JSON.stringify({ v: 1, running: true, todayIds: today, all: rows, projects: projects, somedayIds: someday, tagParents: tagParents, areas: areas });
 }`;
 
 /** Open projects (with their area), areas and tags, for the send draft. */

@@ -39,6 +39,8 @@ export interface Snapshot {
 	someday: Set<string>;
 	/** Each tag's parent tag, for tag hierarchies. */
 	tagParents: Record<string, string | null>;
+	/** Area names, in Things' order. */
+	areas: string[];
 }
 
 export interface Lists {
@@ -90,7 +92,8 @@ export function parseSnapshot(json: string): Snapshot {
 		for (const [k, v] of Object.entries(o.tagParents as Record<string, unknown>)) tagParents[k] = typeof v === "string" && v ? v : null;
 	}
 	// Today's other rows are to-dos; Things only keeps them out of `all` when they are projects.
-	return { running: o.running === true, today, all: all.filter((t) => !t.isProject), projects, someday, tagParents };
+	const areas = Array.isArray(o.areas) ? o.areas.filter((x): x is string => typeof x === "string" && x !== "") : [];
+	return { running: o.running === true, today, all: all.filter((t) => !t.isProject), projects, someday, tagParents, areas };
 }
 
 export function parseLists(json: string): Lists {
@@ -161,14 +164,29 @@ export interface Window {
 	deadlines: (Todo & { days: number })[];
 }
 
-export function windowOf(s: Snapshot, today: string, days = 7, nextCount = 3): Window {
+export function windowOf(s: Snapshot, today: string, days = 7, nextCount = 3, withProjects = false): Window {
 	const inToday = new Set(s.today.map((t) => t.id));
+	// To-dos only, unless you choose otherwise: a project scheduled for today shows in the Projects tab.
+	const todos = withProjects ? s.today : s.today.filter((t) => !t.isProject);
 	const deadlines = s.all
 		.filter((t) => t.deadline && !inToday.has(t.id))
 		.map((t) => ({ ...t, days: daysBetween(today, t.deadline as string) }))
 		.filter((t) => t.days >= 1 && t.days <= days)
 		.sort((a, b) => a.days - b.days || a.title.localeCompare(b.title));
-	return { now: s.today[0] ?? null, next: s.today.slice(1, 1 + nextCount), later: s.today.slice(1 + nextCount), deadlines };
+	return { now: todos[0] ?? null, next: todos.slice(1, 1 + nextCount), later: todos.slice(1 + nextCount), deadlines };
+}
+
+/** The area a to-do belongs to: its own, or its project's. */
+export function areaOf(t: Todo, projects: Map<string, Project>): string | null {
+	return t.area ?? (t.project ? (projects.get(t.project)?.area ?? null) : null);
+}
+
+/** The snapshot as one area sees it: its to-dos (directly or through a project) and its projects. */
+export function filterByArea(s: Snapshot, area: string | null): Snapshot {
+	if (!area) return s;
+	const projects = new Map(s.projects.map((p) => [p.title, p]));
+	const keep = (t: Todo) => areaOf(t, projects) === area;
+	return { ...s, today: s.today.filter(keep), all: s.all.filter(keep), projects: s.projects.filter((p) => p.area === area) };
 }
 
 /** Where a to-do lives, for its subtitle. */
