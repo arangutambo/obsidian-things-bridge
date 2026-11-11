@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-things-bridge",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "A Things 3 window beside your notes: Today, upcoming deadlines and projects, with to-dos linked back to their notes, and a quick draft for sending a note to Things.",
 	"main": "main.js",
 	"scripts": {

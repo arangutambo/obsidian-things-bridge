@@ -19,7 +19,8 @@ Open it from the ribbon or **Open Things**. Along the top, a row of tabs that sc
   heading per day.
 - **Projects:** all your active projects, one tab each in a second sideways row. Pick one and its
   to-dos show underneath: Today, Upcoming by start date, Anytime, and Someday folded away.
-- **One tab per area**, with the same second row for that area's projects (and its to-dos that
+- **One sidebar tab per area**, beside the Things tab and marked with the area's emoji, with the same
+  second row for that area's projects (and its to-dos that
   sit in no project).
 
 Tabs show how many to-dos are in Today; a dot marks a project scheduled for today. Every tab has
@@ -51,7 +52,8 @@ strengthens it, writing it down alone doesn't (Sheeran et al., 2024).
 
 ## Settings
 
-- **Tabs:** Today, Deadlines, Projects, and a tab per area (each area can be left out), and
+- **Tabs:** Today, Deadlines, Projects, and a tab per area (each area can be left out, and areas
+  can sit in the sidebar or in the top row), and
   whether project tabs put those with something today first or follow Things' order.
 - **Windows:** open Things in the right sidebar or a main tab, and whether each tab's command opens
   its own window.

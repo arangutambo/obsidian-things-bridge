@@ -9,6 +9,8 @@ import { dayLabel, renderGroups, renderProjectTasks, renderRow, renderStrip, typ
 
 export const VIEW_TYPE = "things-bridge-window";
 
+export const AREA_VIEW_TYPE = "things-bridge-area";
+
 export function areaTab(area: string): string {
 	return `area:${area}`;
 }
@@ -213,5 +215,48 @@ export class ThingsView extends ThingsBase {
 			const list = sec.createDiv({ cls: "things-bridge-rows" });
 			for (const t of rows) renderRow(this.plugin, list, t, { hidePlace: true });
 		}
+	}
+}
+
+/**
+ * One Things area as a sidebar tab of its own, beside the general Things tab: the area's projects
+ * and its own to-dos, with no row of top tabs.
+ */
+export class AreaView extends ThingsView {
+	constructor(leaf: WorkspaceLeaf, plugin: ThingsBridge) {
+		super(leaf, plugin);
+		this.tab = "";
+	}
+
+	private get area(): string {
+		return this.tab.startsWith("area:") ? this.tab.slice(5) : "";
+	}
+
+	override getViewType(): string {
+		return AREA_VIEW_TYPE;
+	}
+	override getDisplayText(): string {
+		return this.area || "Things area";
+	}
+	override getIcon(): string {
+		return this.area ? this.plugin.areaIcon(this.area) : "check-circle";
+	}
+
+	override async setState(state: unknown, result: ViewStateResult): Promise<void> {
+		await super.setState(state, result);
+		// The tab's icon and name come from the state, which arrives after the tab is drawn.
+		(this.leaf as unknown as { updateHeader?: () => void }).updateHeader?.();
+	}
+
+	protected override renderHead(c: HTMLElement): void {
+		const bar = c.createDiv({ cls: "things-bridge-tabbar" });
+		bar.createDiv({ cls: "things-bridge-area-title", text: this.area });
+		const tools = bar.createDiv({ cls: "things-bridge-tools" });
+		this.addTool(tools, this.busy ? "loader" : "refresh-cw", "Refresh", () => void this.refresh(true));
+		this.addTool(tools, "external-link", "Open Things", () => this.plugin.openUrl("things:///show?id=today"));
+	}
+
+	protected override renderBody(c: HTMLElement, s: Snapshot): void {
+		if (this.area) super.renderBody(c, s);
 	}
 }

@@ -101,3 +101,17 @@
 .things-bridge-project-meta { margin-bottom: var(--size-4-2); }
 .things-bridge-filter { margin: var(--size-4-2) 0 0; }
 .things-bridge-filter select { max-width: 100%; }
+
+/* An area's own sidebar tab */
+.things-bridge-area-title { flex: 1; min-width: 0; font-weight: var(--font-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* With an area tab per area the sidebar strip runs out of room: wrap it, in this tab group only. */
+.workspace-tabs:has(.workspace-tab-header[data-type="things-bridge-area"]) > .workspace-tab-header-container {
+	height: auto;
+	flex: 0 0 auto;
+}
+.workspace-tabs:has(.workspace-tab-header[data-type="things-bridge-area"]) .workspace-tab-header-container-inner {
+	flex-wrap: wrap;
+	height: auto;
+	overflow: visible;
+}

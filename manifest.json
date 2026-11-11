@@ -1,7 +1,7 @@
 {
 	"id": "things-bridge",
 	"name": "Things Bridge",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"minAppVersion": "1.11.4",
 	"description": "A Things 3 window beside your notes: Today, upcoming deadlines and projects, with to-dos linked back to their notes, and a quick draft for sending a note to Things.",
 	"author": "Antoine Haddad",

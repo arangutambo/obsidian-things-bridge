@@ -1,4 +1,4 @@
-import { Menu, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, SuggestModal, TFile, type App, type Editor, type WorkspaceLeaf } from "obsidian";
+import { Menu, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, SuggestModal, TFile, addIcon, type App, type Editor, type WorkspaceLeaf, type WorkspaceSplit } from "obsidian";
 
 import { THINGS_BRIDGE_API_VERSION, type ThingsBridgeApi, type TodoInfo } from "./api-types";
 import { ThingsBase } from "./base";
@@ -11,7 +11,8 @@ import { canRead, explain, openThingsUrl, runJxa, runScript } from "./mac";
 import { PROJECT_VIEW_TYPE, ProjectView } from "./project-view";
 import type { StripItem } from "./rows";
 import { SendModal } from "./send";
-import { ThingsView, VIEW_TYPE, areaTab } from "./view";
+import { areaIconSvg, planAreaTabs, wantedAreas } from "./core/area-tabs";
+import { AREA_VIEW_TYPE, AreaView, ThingsView, VIEW_TYPE, areaTab } from "./view";
 
 interface Prefs {
 	/** How far ahead Today lists deadlines (0: none; the Deadlines tab lists them all). */
@@ -37,8 +38,12 @@ interface Prefs {
 	showToday: boolean;
 	showDeadlines: boolean;
 	showProjects: boolean;
-	/** One top tab per Things area. */
+	/** A tab per Things area. */
 	areaTabs: boolean;
+	/** Those tabs sit in the sidebar beside the general Things tab, not in its top row. */
+	areaSidebarTabs: boolean;
+	/** Areas whose sidebar tab has been added, so one you close stays closed. */
+	placedAreas: string[];
 	/** Areas left out of the tabs. */
 	hiddenAreas: string[];
 	/** Things' areas as last read, so their commands exist before Things is next read. */
@@ -68,6 +73,8 @@ const DEFAULTS: Prefs = {
 	showDeadlines: true,
 	showProjects: true,
 	areaTabs: true,
+	areaSidebarTabs: true,
+	placedAreas: [],
 	hiddenAreas: [],
 	knownAreas: [],
 	projectOrder: "today-first",
@@ -129,6 +136,7 @@ export default class ThingsBridge extends Plugin {
 		this.addSettingTab(new BridgeSettings(this.app, this));
 		this.registerView(VIEW_TYPE, (leaf) => new ThingsView(leaf, this));
 		this.registerView(PROJECT_VIEW_TYPE, (leaf) => new ProjectView(leaf, this));
+		this.registerView(AREA_VIEW_TYPE, (leaf) => new AreaView(leaf, this));
 		this.addRibbonIcon("check-circle", "Open Things", () => void this.openHub(null));
 		this.addCommand({ id: "open-window", name: "Open Things", callback: () => void this.openHub(null) });
 		this.addCommand({ id: "open-today", name: "Open Things: today", callback: () => void this.openHub("today") });
@@ -137,6 +145,7 @@ export default class ThingsBridge extends Plugin {
 		this.addCommand({ id: "open-project", name: "Open a Things project…", callback: () => void this.pickProject() });
 		this.addCommand({ id: "send", name: "Send to Things…", callback: () => this.send() });
 		this.syncAreaCommands(this.prefs.knownAreas);
+		this.app.workspace.onLayoutReady(() => void this.syncAreaTabs());
 	}
 
 	async save(): Promise<void> {
@@ -161,6 +170,7 @@ export default class ThingsBridge extends Plugin {
 					this.prefs.knownAreas = data.areas;
 					void this.save();
 					this.syncAreaCommands(data.areas);
+					void this.syncAreaTabs();
 				}
 				return data;
 			})
@@ -333,7 +343,7 @@ export default class ThingsBridge extends Plugin {
 	}
 
 	private views(): ThingsBase[] {
-		return [...this.app.workspace.getLeavesOfType(VIEW_TYPE), ...this.app.workspace.getLeavesOfType(PROJECT_VIEW_TYPE)].map((l) => l.view).filter((v): v is ThingsBase => v instanceof ThingsBase);
+		return [VIEW_TYPE, AREA_VIEW_TYPE, PROJECT_VIEW_TYPE].flatMap((t) => this.app.workspace.getLeavesOfType(t)).map((l) => l.view).filter((v): v is ThingsBase => v instanceof ThingsBase);
 	}
 
 	/** Re-reads Things for every visible view. */
@@ -407,7 +417,7 @@ export default class ThingsBridge extends Plugin {
 			out.push({ id: "deadlines", label: "Deadlines", count: s ? s.all.filter((t) => t.deadline && t.deadline <= soon).length : 0 });
 		}
 		if (p.showProjects) out.push({ id: "projects", label: "Projects" });
-		if (p.areaTabs) {
+		if (p.areaTabs && !p.areaSidebarTabs) {
 			for (const area of s?.areas ?? p.knownAreas) {
 				if (p.hiddenAreas.includes(area)) continue;
 				out.push({ id: areaTab(area), label: area, count: s ? todayCount(filterByArea(s, area)) : 0 });
@@ -430,11 +440,81 @@ export default class ThingsBridge extends Plugin {
 			this.areaCommands.delete(area);
 		}
 		for (const area of areas) {
+			this.areaIcon(area);
 			if (this.areaCommands.has(area)) continue;
 			const id = `open-area-${hashOf(area)}`;
 			this.addCommand({ id, name: `Open Things: ${area}`, callback: () => void this.openHub(areaTab(area)) });
 			this.areaCommands.set(area, id);
 		}
+	}
+
+	/** The icon for an area's sidebar tab, drawn from its emoji and registered on first use. */
+	areaIcon(area: string): string {
+		const id = `things-area-${hashOf(area)}`;
+		addIcon(id, areaIconSvg(area));
+		return id;
+	}
+
+	private areaLeaves(): { leaf: WorkspaceLeaf; area: string }[] {
+		return this.app.workspace.getLeavesOfType(AREA_VIEW_TYPE).flatMap((leaf) => {
+			// A tab that hasn't been shown yet has no real view, but its saved state says which area.
+			const tab = (leaf.getViewState().state as { tab?: unknown } | undefined)?.tab;
+			return typeof tab === "string" && tab.startsWith("area:") ? [{ leaf, area: tab.slice(5) }] : [];
+		});
+	}
+
+	/** A new tab for an area, at the end of the tab group holding the general Things tab. */
+	private async addAreaLeaf(area: string): Promise<WorkspaceLeaf | null> {
+		const { workspace } = this.app;
+		const general = workspace.getLeavesOfType(VIEW_TYPE)[0];
+		let leaf: WorkspaceLeaf | null;
+		if (general) {
+			const parent = general.parent as unknown as WorkspaceSplit & { children?: unknown[] };
+			leaf = workspace.createLeafInParent(parent, parent.children?.length ?? 0);
+		} else {
+			leaf = workspace.getRightLeaf(false);
+		}
+		await leaf?.setViewState({ type: AREA_VIEW_TYPE, active: false, state: { tab: areaTab(area) } });
+		return leaf;
+	}
+
+	private areaSync: Promise<void> = Promise.resolve();
+
+	/** Brings the sidebar tabs in step with Things' areas and the settings. Never reads Things. */
+	syncAreaTabs(): Promise<void> {
+		// One at a time: two overlapping runs would each add the same tabs.
+		this.areaSync = this.areaSync.then(() => this.runAreaSync()).catch((e) => console.error("[things-bridge] area tabs", e));
+		return this.areaSync;
+	}
+
+	private async runAreaSync(): Promise<void> {
+		const { workspace } = this.app;
+		if (!workspace.layoutReady) return;
+		const p = this.prefs;
+		const wanted = wantedAreas(p.knownAreas, p.hiddenAreas, p.areaTabs && p.areaSidebarTabs);
+		const open = this.areaLeaves();
+		// New tabs join the general Things tab, so none are added until it exists.
+		const hasGeneral = workspace.getLeavesOfType(VIEW_TYPE).length > 0;
+		const plan = planAreaTabs(wanted, open.map((o) => o.area), hasGeneral ? p.placedAreas : wanted);
+		for (const o of open) if (plan.close.includes(o.area)) o.leaf.detach();
+		// A new tab becomes the selected one; put back whatever was showing (undocumented, so guarded).
+		const group = workspace.getLeavesOfType(VIEW_TYPE)[0]?.parent as unknown as { currentTab?: number; selectTabIndex?: (index: number) => void } | undefined;
+		const showing = group?.currentTab;
+		for (const area of plan.add) await this.addAreaLeaf(area);
+		if (plan.add.length && showing !== undefined) group?.selectTabIndex?.(showing);
+		const placed = hasGeneral ? plan.placed : p.placedAreas.filter((a) => wanted.includes(a));
+		if (placed.join("\n") !== p.placedAreas.join("\n")) {
+			p.placedAreas = placed;
+			await this.save();
+		}
+	}
+
+	private async openAreaTab(area: string): Promise<ThingsView | null> {
+		const leaf = this.areaLeaves().find((o) => o.area === area)?.leaf ?? (await this.addAreaLeaf(area));
+		if (!leaf) return null;
+		await leaf.loadIfDeferred();
+		await this.app.workspace.revealLeaf(leaf);
+		return leaf.view instanceof AreaView ? leaf.view : null;
 	}
 
 	/**
@@ -443,6 +523,7 @@ export default class ThingsBridge extends Plugin {
 	 */
 	async openHub(tab: string | null): Promise<ThingsView | null> {
 		const { workspace } = this.app;
+		if (tab?.startsWith("area:") && this.prefs.areaTabs && this.prefs.areaSidebarTabs) return this.openAreaTab(tab.slice(5));
 		const leaves = workspace.getLeavesOfType(VIEW_TYPE);
 		let leaf: WorkspaceLeaf | null | undefined = this.prefs.separateWindows && tab ? leaves.find((l) => l.view instanceof ThingsView && l.view.tab === tab) : leaves[0];
 		if (!leaf) {
@@ -454,6 +535,7 @@ export default class ThingsBridge extends Plugin {
 		const view = leaf.view instanceof ThingsView ? leaf.view : null;
 		if (view && tab && view.tab !== tab) await view.showTab(tab);
 		await workspace.revealLeaf(leaf);
+		await this.syncAreaTabs();
 		return view;
 	}
 
@@ -625,6 +707,7 @@ class BridgeSettings extends PluginSettingTab {
 		const changed = async () => {
 			await this.plugin.save();
 			this.plugin.renderViews();
+			await this.plugin.syncAreaTabs();
 		};
 		const num = (name: string, desc: string, key: "deadlineDays" | "refreshMinutes" | "leadDays" | "nextCount", min: number) =>
 			new Setting(containerEl)
@@ -639,7 +722,7 @@ class BridgeSettings extends PluginSettingTab {
 						}
 					}),
 				);
-		const toggle = (name: string, desc: string, key: "showToday" | "showDeadlines" | "showProjects" | "areaTabs" | "separateWindows" | "groupsOpen" | "projectsInToday", redraw = false) =>
+		const toggle = (name: string, desc: string, key: "showToday" | "showDeadlines" | "showProjects" | "areaTabs" | "areaSidebarTabs" | "separateWindows" | "groupsOpen" | "projectsInToday", redraw = false) =>
 			new Setting(containerEl)
 				.setName(name)
 				.setDesc(desc)
@@ -657,6 +740,7 @@ class BridgeSettings extends PluginSettingTab {
 		toggle("Projects tab", "All active projects, one tab each.", "showProjects");
 		toggle("A tab for each area", "Each area's projects, one tab each. Each also gets a command, so it can have a hotkey.", "areaTabs", true);
 		if (p.areaTabs) {
+			toggle("Areas in the sidebar", "On: each area is its own tab in the sidebar, next to the Things tab. Off: they sit in the row of tabs at the top of Things.", "areaSidebarTabs");
 			if (!p.knownAreas.length) containerEl.createDiv({ cls: "setting-item-description", text: "Your areas appear here once Things has been read." });
 			for (const area of p.knownAreas) {
 				new Setting(containerEl).setName(area).setClass("things-bridge-indent").addToggle((t) =>
