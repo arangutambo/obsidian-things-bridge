@@ -39,9 +39,52 @@
 .things-bridge-step { font-size: var(--font-ui-large); font-weight: var(--font-semibold); }
 
 /* Tabs, groups and projects */
-.things-bridge-tabs { display: flex; gap: var(--size-4-1); }
-.things-bridge-tabs button { background: transparent; box-shadow: none; color: var(--text-muted); padding: var(--size-2-2) var(--size-4-2); }
-.things-bridge-tabs button.is-active { color: var(--text-normal); background: var(--background-modifier-hover); font-weight: var(--font-semibold); }
+/* Tab rows that scroll sideways (the finance hub's pattern) */
+.things-bridge-tabbar {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	margin: calc(-1 * var(--size-4-3)) calc(-1 * var(--size-4-3)) var(--size-4-2);
+	padding: var(--size-4-2) var(--size-4-3);
+	background: var(--background-primary);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+.things-bridge-strip {
+	display: flex;
+	flex-wrap: nowrap;
+	gap: var(--size-2-2);
+	overflow-x: auto;
+	min-width: 0;
+	scrollbar-width: none;
+}
+.things-bridge-strip::-webkit-scrollbar { display: none; }
+.things-bridge-tabbar .things-bridge-strip { flex: 1; }
+.things-bridge-tab {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	gap: var(--size-2-2);
+	white-space: nowrap;
+	padding: var(--size-2-2) var(--size-4-2);
+	background: transparent;
+	box-shadow: none;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+.things-bridge-tab:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.things-bridge-tab.is-active { color: var(--text-normal); background: var(--background-modifier-hover); font-weight: var(--font-semibold); }
+.things-bridge-strip.is-sub { margin: var(--size-4-1) 0 var(--size-4-2); padding-bottom: var(--size-2-2); border-bottom: 1px solid var(--background-modifier-border); }
+.things-bridge-strip.is-sub .things-bridge-tab { border: 1px solid var(--background-modifier-border); border-radius: var(--radius-l); }
+.things-bridge-strip.is-sub .things-bridge-tab.is-active { border-color: var(--interactive-accent); }
+.things-bridge-badge { font-size: var(--font-ui-smaller); color: var(--text-muted); font-weight: var(--font-normal); }
+.things-bridge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--interactive-accent); flex: none; }
+.things-bridge-tabbar .things-bridge-tools { flex: none; }
+.things-bridge-project-tools { display: flex; justify-content: flex-end; gap: var(--size-4-1); }
+.things-bridge-overdue { color: var(--text-error); }
+.things-bridge-indent { padding-left: var(--size-4-6); }
 .things-bridge-group { margin: var(--size-4-1) 0; }
 .things-bridge-group > summary { display: flex; align-items: center; gap: var(--size-4-2); cursor: pointer; padding: var(--size-2-1) 0; }
 .things-bridge-group > summary .things-bridge-group-title { font-weight: var(--font-semibold); }

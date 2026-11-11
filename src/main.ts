@@ -1,21 +1,22 @@
-import { Modal, Notice, Plugin, PluginSettingTab, Setting, SuggestModal, TFile, type App, type Editor } from "obsidian";
+import { Menu, Modal, Notice, Plugin, PluginSettingTab, SecretComponent, Setting, SuggestModal, TFile, type App, type Editor, type WorkspaceLeaf } from "obsidian";
 
 import { THINGS_BRIDGE_API_VERSION, type ThingsBridgeApi, type TodoInfo } from "./api-types";
-import { addDays, localToday } from "./core/dates";
-import { addProjectUrl, addUrl, type DraftContext, type TodoDraft } from "./core/draft";
-import { LISTS_SCRIPT, READ_SCRIPT, STATUS_SCRIPT } from "./core/jxa";
-import type { GroupBy } from "./core/groups";
-import { linkedFile, obsidianLink, parseLists, parseSnapshot, type Lists, type Project, type Snapshot, type Todo } from "./core/model";
 import { ThingsBase } from "./base";
+import { addDays, isIsoDate, localToday } from "./core/dates";
+import { addProjectUrl, addUrl, updateUrl, type DraftContext, type TodoDraft } from "./core/draft";
+import type { GroupBy } from "./core/groups";
+import { LISTS_SCRIPT, READ_SCRIPT, STATUS_SCRIPT, actionCall, type TodoAction } from "./core/jxa";
+import { filterByArea, linkedFile, obsidianLink, parseLists, parseSnapshot, type Lists, type Project, type Snapshot, type Todo } from "./core/model";
+import { canRead, explain, openThingsUrl, runJxa, runScript } from "./mac";
 import { PROJECT_VIEW_TYPE, ProjectView } from "./project-view";
-import { canRead, explain, runJxa } from "./mac";
+import type { StripItem } from "./rows";
 import { SendModal } from "./send";
-import { ThingsView, VIEW_TYPE } from "./view";
+import { ThingsView, VIEW_TYPE, areaTab } from "./view";
 
 interface Prefs {
-	/** How far ahead the window lists deadlines. */
+	/** How far ahead Today lists deadlines (0: none; the Deadlines tab lists them all). */
 	deadlineDays: number;
-	/** Minutes between refreshes while the window is visible. */
+	/** Minutes between refreshes while a view is visible. */
 	refreshMinutes: number;
 	/** Default days between a to-do's start reminder (When) and its deadline. */
 	leadDays: number;
@@ -25,21 +26,65 @@ interface Prefs {
 	groupBy: GroupBy;
 	/** Whether those groups start unfolded. */
 	groupsOpen: boolean;
-	/** Where a project's view opens. */
-	projectsOpenIn: "tab" | "split";
-	/** The window's last tab. */
-	tab: "today" | "projects";
-	/** Show projects scheduled for today among Today's to-dos (otherwise only in the Projects tab). */
+	/** Show projects scheduled for today among Today's to-dos (otherwise in their project tabs). */
 	projectsInToday: boolean;
-	/** The area the main window shows; empty for all. */
-	defaultArea: string;
+	/** Where a project opened "in its own tab" goes. */
+	projectsOpenIn: "tab" | "split";
+	/** The last top tab, used by a newly opened window. */
+	tab: string;
+	/** The project tab last picked in each top tab. */
+	selectedProject: Record<string, string>;
+	showToday: boolean;
+	showDeadlines: boolean;
+	showProjects: boolean;
+	/** One top tab per Things area. */
+	areaTabs: boolean;
+	/** Areas left out of the tabs. */
+	hiddenAreas: string[];
+	/** Things' areas as last read, so their commands exist before Things is next read. */
+	knownAreas: string[];
+	/** Project tabs: those with something today first, or Things' order. */
+	projectOrder: "today-first" | "things";
+	/** Where the Things window opens. */
+	openIn: "right" | "main";
+	/** Each tab's command opens its own window (several side by side), instead of switching one. */
+	separateWindows: boolean;
+	/** The id of the secret holding Things' URL token (in Obsidian's secure storage). */
+	tokenSecret: string;
 }
 
-const DEFAULTS: Prefs = { deadlineDays: 7, refreshMinutes: 3, leadDays: 2, nextCount: 3, groupBy: "project", groupsOpen: false, projectsOpenIn: "tab", tab: "today", projectsInToday: false, defaultArea: "" };
+const DEFAULTS: Prefs = {
+	deadlineDays: 7,
+	refreshMinutes: 3,
+	leadDays: 2,
+	nextCount: 3,
+	groupBy: "project",
+	groupsOpen: false,
+	projectsInToday: false,
+	projectsOpenIn: "tab",
+	tab: "today",
+	selectedProject: {},
+	showToday: true,
+	showDeadlines: true,
+	showProjects: true,
+	areaTabs: true,
+	hiddenAreas: [],
+	knownAreas: [],
+	projectOrder: "today-first",
+	openIn: "right",
+	separateWindows: false,
+	tokenSecret: "things-url-token",
+};
 
 /** Extra context for a draft: the course it belongs to, so the right project can be found. */
 export interface SendContext extends DraftContext {
 	code: string | null;
+}
+
+function hashOf(s: string): string {
+	let h = 0x811c9dc5;
+	for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+	return (h >>> 0).toString(36);
 }
 
 export default class ThingsBridge extends Plugin {
@@ -50,6 +95,7 @@ export default class ThingsBridge extends Plugin {
 	private reading: Promise<Snapshot> | null = null;
 	/** To-dos ticked in the last few seconds, shown done with an Undo in every view. */
 	readonly justDone = new Map<string, number>();
+	private areaCommands = new Map<string, string>();
 
 	/** The public API (contract in `src/api-types.ts`), reached as `app.plugins.getPlugin("things-bridge").api`. */
 	readonly api: ThingsBridgeApi = {
@@ -78,15 +124,19 @@ export default class ThingsBridge extends Plugin {
 	};
 
 	override async onload(): Promise<void> {
-		this.prefs = { ...DEFAULTS, ...((await this.loadData()) as Partial<Prefs> | null) };
+		const data = ((await this.loadData()) ?? {}) as Partial<Prefs>;
+		this.prefs = { ...DEFAULTS, ...data, selectedProject: { ...(data.selectedProject ?? {}) } };
 		this.addSettingTab(new BridgeSettings(this.app, this));
 		this.registerView(VIEW_TYPE, (leaf) => new ThingsView(leaf, this));
 		this.registerView(PROJECT_VIEW_TYPE, (leaf) => new ProjectView(leaf, this));
-		this.addRibbonIcon("check-circle", "Open Things window", () => void this.openWindow());
-		this.addCommand({ id: "open-window", name: "Open Things window", callback: () => void this.openWindow() });
-		this.addCommand({ id: "send", name: "Send to Things…", callback: () => this.send() });
+		this.addRibbonIcon("check-circle", "Open Things", () => void this.openHub(null));
+		this.addCommand({ id: "open-window", name: "Open Things", callback: () => void this.openHub(null) });
+		this.addCommand({ id: "open-today", name: "Open Things: today", callback: () => void this.openHub("today") });
+		this.addCommand({ id: "open-deadlines", name: "Open Things: deadlines", callback: () => void this.openHub("deadlines") });
+		this.addCommand({ id: "open-projects", name: "Open Things: all projects", callback: () => void this.openHub("projects") });
 		this.addCommand({ id: "open-project", name: "Open a Things project…", callback: () => void this.pickProject() });
-		this.addCommand({ id: "open-area", name: "Open a Things window for one area…", callback: () => void this.pickArea() });
+		this.addCommand({ id: "send", name: "Send to Things…", callback: () => this.send() });
+		this.syncAreaCommands(this.prefs.knownAreas);
 	}
 
 	async save(): Promise<void> {
@@ -107,6 +157,11 @@ export default class ThingsBridge extends Plugin {
 			.then((out) => {
 				const data = parseSnapshot(out);
 				this.snapshot = { data, at: Date.now() };
+				if (data.running && data.areas.join("\n") !== this.prefs.knownAreas.join("\n")) {
+					this.prefs.knownAreas = data.areas;
+					void this.save();
+					this.syncAreaCommands(data.areas);
+				}
 				return data;
 			})
 			.finally(() => {
@@ -135,6 +190,8 @@ export default class ThingsBridge extends Plugin {
 	private info(t: Todo): TodoInfo {
 		return { id: t.id, title: t.title, when: t.when, deadline: t.deadline, tags: t.tags, project: t.project, area: t.area, note: linkedFile(t, this.app.vault.getName()) };
 	}
+
+	// ----- changing to-dos -----
 
 	/**
 	 * Ticks (or unticks) a to-do: shown at once in every view, written to Things in the background,
@@ -172,26 +229,102 @@ export default class ThingsBridge extends Plugin {
 		this.stale();
 	}
 
+	/** One of the right-click actions, in the background. */
+	private async act(t: Todo, action: TodoAction, arg: string, done: string): Promise<void> {
+		try {
+			await runScript(actionCall(action, t.id, arg), 15_000);
+			new Notice(done);
+		} catch (e) {
+			new Notice(explain(e), 8000);
+		}
+		this.stale();
+		this.refreshViews();
+	}
+
+	private token(): string {
+		return this.app.secretStorage.getSecret(this.prefs.tokenSecret) ?? "";
+	}
+
+	/** Things' usual actions on a to-do, on right-click. */
+	todoMenu(e: MouseEvent, t: Todo): void {
+		const menu = new Menu();
+		const item = (title: string, icon: string, run: () => void, disabled = false) =>
+			menu.addItem((i) => {
+				i.setTitle(title).setIcon(icon).onClick(run);
+				if (disabled) i.setDisabled(true);
+			});
+		const today = localToday();
+		const hasToken = !!this.token();
+		item("Today", "star", () => void this.act(t, "today", "", "Moved to Today."));
+		item(hasToken ? "This evening" : "This evening (add your Things URL token in settings)", "moon", () => this.evening(t), !hasToken);
+		item("Tomorrow", "sunrise", () => void this.act(t, "date", addDays(today, 1), "Moved to tomorrow."));
+		item("Pick a date…", "calendar", () => new DateModal(this.app, "When", t.when ?? addDays(today, 1), (d) => d && void this.act(t, "date", d, `Moved to ${d}.`)).open());
+		item("Anytime", "layers", () => void this.act(t, "anytime", "", "Moved to Anytime."));
+		item("Someday", "archive", () => void this.act(t, "someday", "", "Moved to Someday."));
+		menu.addSeparator();
+		item(t.deadline ? "Change deadline…" : "Add a deadline…", "flag", () => new DateModal(this.app, "Deadline", t.deadline ?? addDays(today, 7), (d) => d && void this.act(t, "deadline", d, `Deadline set to ${d}.`)).open());
+		if (t.deadline) item("Clear deadline", "flag-off", () => void this.act(t, "deadline", "", "Deadline cleared."));
+		item("Move to…", "folder-input", () => void this.pickPlace(t));
+		menu.addSeparator();
+		item("Show in Things", "external-link", () => this.openUrl(`things:///show?id=${encodeURIComponent(t.id)}`));
+		const note = linkedFile(t, this.app.vault.getName());
+		if (note) item("Open linked note", "file-text", () => void this.openNote(note));
+		menu.addSeparator();
+		item("Complete", "check-circle", () => void this.toggle(t, true));
+		item("Cancel", "x-circle", () => void this.act(t, "cancel", "", "Cancelled."));
+		item("Move to Trash", "trash-2", () =>
+			new Confirm(this.app, "Move this to-do to the Trash?", `“${t.title}”. It stays in Things' Trash until you empty it.`, "Move to Trash", () => void this.act(t, "trash", "", "Moved to the Trash.")).open(),
+		);
+		menu.showAtMouseEvent(e);
+	}
+
+	private evening(t: Todo): void {
+		const token = this.token();
+		if (!token) {
+			new Notice("Moving to this evening needs Things' URL token. Add it in this plugin's settings.", 8000);
+			return;
+		}
+		openThingsUrl(updateUrl(t.id, token, { when: "evening" }), true);
+		new Notice("Moved to this evening.");
+		this.stale();
+		window.setTimeout(() => this.refreshViews(), 2500);
+	}
+
+	private async pickPlace(t: Todo): Promise<void> {
+		const s = this.snapshot?.data ?? (await this.read({ maxAge: 5 * 60_000 }).catch(() => null));
+		if (!s?.running) return;
+		const places: Place[] = [...s.projects.filter((p) => !p.someday).map((p): Place => ({ kind: "project", id: p.id, title: p.title, area: p.area })), ...s.areas.map((a): Place => ({ kind: "area", id: a, title: a, area: null }))];
+		new PlacePicker(this.app, places, (p) => void this.act(t, p.kind, p.id, `Moved to ${p.title}.`)).open();
+	}
+
 	// ----- writing -----
 
+	/** Shows something in Things (brings it forward). */
 	openUrl(url: string): void {
-		window.open(url);
+		openThingsUrl(url, false);
 	}
 
 	add(draft: TodoDraft): void {
-		this.openUrl(addUrl(draft));
+		openThingsUrl(addUrl(draft), true);
 		this.stale();
-		window.setTimeout(() => this.refreshViews(), 4000);
+		window.setTimeout(() => this.refreshViews(), 3000);
 	}
 
 	confirmProject(project: { title: string; area: string | null; notes?: string }): Promise<boolean> {
-		return new Promise((resolve) => new ConfirmProject(this.app, project, (ok) => {
-			if (ok) {
-				this.openUrl(addProjectUrl(project));
+		return new Promise((resolve) => {
+			let answered = false;
+			const m = new Confirm(this.app, "Make a new Things project?", `“${project.title}”${project.area ? ` in ${project.area}` : ""}. Nothing else in Things changes.`, "Make project", () => {
+				answered = true;
+				openThingsUrl(addProjectUrl(project), true);
 				this.listsCache = null;
-			}
-			resolve(ok);
-		}).open());
+				resolve(true);
+			});
+			m.onClose = () => {
+				m.contentEl.empty();
+				if (!answered) resolve(false);
+			};
+			m.open();
+		});
 	}
 
 	/** Marks the copy as old without throwing it away, so the window keeps showing something. */
@@ -250,19 +383,101 @@ export default class ThingsBridge extends Plugin {
 		return { selection, heading: selection ? null : heading, noteTitle: file.basename, link: obsidianLink(this.app.vault.getName(), file.path), list, tags: [], code };
 	}
 
-	/** A draft for a to-do in a given project, using the open note as context when there is one. */
-	sendTo(projectTitle: string): void {
+	/** A draft for a to-do in a given project or area, using the open note as context when there is one. */
+	sendTo(listTitle: string): void {
 		const file = this.app.workspace.getActiveFile();
 		const ctx: SendContext =
 			file && file.extension === "md"
-				? { ...this.contextFor(file, this.app.workspace.activeEditor?.editor ?? null), list: projectTitle }
-				: { selection: "", heading: null, noteTitle: "", link: "", list: projectTitle, tags: [], code: null };
+				? { ...this.contextFor(file, this.app.workspace.activeEditor?.editor ?? null), list: listTitle }
+				: { selection: "", heading: null, noteTitle: "", link: "", list: listTitle, tags: [], code: null };
 		new SendModal(this, ctx).open();
 	}
 
-	// ----- window and project views -----
+	// ----- tabs, windows and commands -----
 
-	/** Opens a project's view, reusing one already open for it. */
+	/** The top tabs, as settings choose, with today's counts. */
+	visibleTabs(): StripItem[] {
+		const p = this.prefs;
+		const s = this.snapshot?.data.running ? this.snapshot.data : null;
+		const todayCount = (snap: Snapshot) => snap.today.filter((t) => !t.isProject).length;
+		const out: StripItem[] = [];
+		if (p.showToday) out.push({ id: "today", label: "Today", count: s ? todayCount(s) : 0 });
+		if (p.showDeadlines) {
+			const soon = s ? addDays(localToday(), Math.max(1, p.deadlineDays)) : "";
+			out.push({ id: "deadlines", label: "Deadlines", count: s ? s.all.filter((t) => t.deadline && t.deadline <= soon).length : 0 });
+		}
+		if (p.showProjects) out.push({ id: "projects", label: "Projects" });
+		if (p.areaTabs) {
+			for (const area of s?.areas ?? p.knownAreas) {
+				if (p.hiddenAreas.includes(area)) continue;
+				out.push({ id: areaTab(area), label: area, count: s ? todayCount(filterByArea(s, area)) : 0 });
+			}
+		}
+		if (!out.length) out.push({ id: "today", label: "Today" });
+		return out;
+	}
+
+	tabLabel(id: string): string {
+		if (id.startsWith("area:")) return id.slice(5);
+		return { today: "Today", deadlines: "Deadlines", projects: "Projects" }[id] ?? "Things";
+	}
+
+	/** One command per area ("Open Things: 🎓 School"), kept in step with Things' areas. */
+	private syncAreaCommands(areas: string[]): void {
+		for (const [area, id] of this.areaCommands) {
+			if (areas.includes(area)) continue;
+			this.removeCommand(id);
+			this.areaCommands.delete(area);
+		}
+		for (const area of areas) {
+			if (this.areaCommands.has(area)) continue;
+			const id = `open-area-${hashOf(area)}`;
+			this.addCommand({ id, name: `Open Things: ${area}`, callback: () => void this.openHub(areaTab(area)) });
+			this.areaCommands.set(area, id);
+		}
+	}
+
+	/**
+	 * Opens Things on a tab (or as it was, for null). With separate windows on, each tab's command
+	 * opens its own window, reused next time; otherwise one window switches tab.
+	 */
+	async openHub(tab: string | null): Promise<ThingsView | null> {
+		const { workspace } = this.app;
+		const leaves = workspace.getLeavesOfType(VIEW_TYPE);
+		let leaf: WorkspaceLeaf | null | undefined = this.prefs.separateWindows && tab ? leaves.find((l) => l.view instanceof ThingsView && l.view.tab === tab) : leaves[0];
+		if (!leaf) {
+			leaf = this.prefs.openIn === "main" ? workspace.getLeaf("tab") : workspace.getRightLeaf(leaves.length > 0);
+			if (!leaf) return null;
+			await leaf.setViewState({ type: VIEW_TYPE, active: true, state: tab ? { tab } : {} });
+		}
+		await leaf.loadIfDeferred();
+		const view = leaf.view instanceof ThingsView ? leaf.view : null;
+		if (view && tab && view.tab !== tab) await view.showTab(tab);
+		await workspace.revealLeaf(leaf);
+		return view;
+	}
+
+	/** A project's tab: under its area's tab when there is one, otherwise under Projects. */
+	async showProject(id: string | null, title: string): Promise<void> {
+		const s = this.snapshot?.data;
+		const project = s?.projects.find((p) => (id ? p.id === id : p.title === title)) ?? null;
+		const p = this.prefs;
+		const area = project?.area ?? null;
+		const tab = p.areaTabs && area && !p.hiddenAreas.includes(area) ? areaTab(area) : p.showProjects ? "projects" : null;
+		if (!tab || !project) {
+			await this.openProject(id, title);
+			return;
+		}
+		const view = await this.openHub(tab);
+		view?.selectProject(tab, project.id);
+	}
+
+	async showProjectByTitle(title: string): Promise<void> {
+		const p = this.snapshot?.data.projects.find((x) => x.title === title);
+		await this.showProject(p?.id ?? null, title);
+	}
+
+	/** A project in a view of its own (a tab or a split), reused if already open. */
 	async openProject(id: string | null, title: string): Promise<void> {
 		const { workspace } = this.app;
 		const existing = workspace.getLeavesOfType(PROJECT_VIEW_TYPE).find((l) => {
@@ -278,40 +493,6 @@ export default class ThingsBridge extends Plugin {
 		await workspace.revealLeaf(leaf);
 	}
 
-	async openProjectByTitle(title: string): Promise<void> {
-		const p = this.snapshot?.data.projects.find((x) => x.title === title);
-		await this.openProject(p?.id ?? null, title);
-	}
-
-	/** A window kept to one area, beside the main one; reused if it is already open. */
-	async openAreaWindow(area: string): Promise<void> {
-		const { workspace } = this.app;
-		const existing = workspace.getLeavesOfType(VIEW_TYPE).find((l) => l.view instanceof ThingsView && l.view.pinnedArea === area);
-		if (existing) {
-			await workspace.revealLeaf(existing);
-			return;
-		}
-		const leaf = workspace.getRightLeaf(true);
-		if (!leaf) return;
-		await leaf.setViewState({ type: VIEW_TYPE, state: { pinned: true, area }, active: true });
-		await workspace.revealLeaf(leaf);
-	}
-
-	private async pickArea(): Promise<void> {
-		let s: Snapshot;
-		try {
-			s = await this.read({ maxAge: 5 * 60_000 });
-		} catch (e) {
-			new Notice(explain(e), 8000);
-			return;
-		}
-		if (!s.running || !s.areas.length) {
-			new Notice(s.running ? "Things has no areas yet." : "Things isn't open. Open it, then try again.");
-			return;
-		}
-		new AreaPicker(this.app, s.areas, (a) => void this.openAreaWindow(a)).open();
-	}
-
 	private async pickProject(): Promise<void> {
 		let s: Snapshot;
 		try {
@@ -324,19 +505,7 @@ export default class ThingsBridge extends Plugin {
 			new Notice("Things isn't open. Open it, then try again.");
 			return;
 		}
-		new ProjectPicker(this.app, s.projects.filter((p) => !p.someday), (p) => void this.openProject(p.id, p.title)).open();
-	}
-
-	async openWindow(): Promise<void> {
-		const { workspace } = this.app;
-		let leaf = workspace.getLeavesOfType(VIEW_TYPE)[0];
-		if (!leaf) {
-			const right = workspace.getRightLeaf(false);
-			if (!right) return;
-			await right.setViewState({ type: VIEW_TYPE, active: true });
-			leaf = right;
-		}
-		await workspace.revealLeaf(leaf);
+		new ProjectPicker(this.app, s.projects.filter((p) => !p.someday), (p) => void this.showProject(p.id, p.title)).open();
 	}
 
 	async openNote(path: string): Promise<void> {
@@ -346,20 +515,28 @@ export default class ThingsBridge extends Plugin {
 	}
 }
 
-class AreaPicker extends SuggestModal<string> {
-	constructor(app: App, private areas: string[], private onPick: (area: string) => void) {
+interface Place {
+	kind: "project" | "area";
+	id: string;
+	title: string;
+	area: string | null;
+}
+
+class PlacePicker extends SuggestModal<Place> {
+	constructor(app: App, private places: Place[], private onPick: (p: Place) => void) {
 		super(app);
-		this.setPlaceholder("Which area?");
+		this.setPlaceholder("Move to which project or area?");
 	}
-	getSuggestions(q: string): string[] {
-		const s = q.toLowerCase();
-		return this.areas.filter((a) => a.toLowerCase().includes(s));
+	getSuggestions(q: string): Place[] {
+		const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+		return this.places.filter((p) => words.every((w) => `${p.title} ${p.area ?? ""}`.toLowerCase().includes(w)));
 	}
-	renderSuggestion(a: string, el: HTMLElement): void {
-		el.createDiv({ text: a });
+	renderSuggestion(p: Place, el: HTMLElement): void {
+		el.createDiv({ text: p.title });
+		el.createEl("small", { cls: "things-bridge-muted", text: p.kind === "area" ? "Area" : (p.area ?? "Project") });
 	}
-	onChooseSuggestion(a: string): void {
-		this.onPick(a);
+	onChooseSuggestion(p: Place): void {
+		this.onPick(p);
 	}
 }
 
@@ -381,33 +558,57 @@ class ProjectPicker extends SuggestModal<Project> {
 	}
 }
 
-/** Making a Things project always needs a yes (charter: never a new project without asking). */
-class ConfirmProject extends Modal {
-	private answered = false;
-
-	constructor(app: App, private project: { title: string; area: string | null }, private done: (ok: boolean) => void) {
+/** A date, for When or a deadline. */
+class DateModal extends Modal {
+	constructor(app: App, private heading: string, private initial: string, private onPick: (date: string | null) => void) {
 		super(app);
 	}
-
 	override onOpen(): void {
-		this.setTitle("Make a new Things project?");
-		this.contentEl.createEl("p", { text: `“${this.project.title}”${this.project.area ? ` in ${this.project.area}` : ""}. Nothing else in Things changes.` });
+		this.setTitle(this.heading);
+		let value = this.initial;
+		new Setting(this.contentEl).setName("Date").addText((t) => {
+			t.inputEl.type = "date";
+			t.setValue(this.initial).onChange((v) => (value = v));
+			window.setTimeout(() => t.inputEl.focus(), 0);
+		});
+		const done = () => {
+			if (!isIsoDate(value)) return;
+			this.close();
+			this.onPick(value);
+		};
+		this.scope.register([], "Enter", () => {
+			done();
+			return false;
+		});
+		new Setting(this.contentEl)
+			.addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
+			.addButton((b) => b.setButtonText("Set").setCta().onClick(done));
+	}
+	override onClose(): void {
+		this.contentEl.empty();
+	}
+}
+
+class Confirm extends Modal {
+	constructor(app: App, private heading: string, private body: string, private yes: string, private onYes: () => void) {
+		super(app);
+	}
+	override onOpen(): void {
+		this.setTitle(this.heading);
+		this.contentEl.createEl("p", { text: this.body });
 		new Setting(this.contentEl)
 			.addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
 			.addButton((b) =>
 				b
-					.setButtonText("Make project")
+					.setButtonText(this.yes)
 					.setCta()
 					.onClick(() => {
-						this.answered = true;
-						this.done(true);
+						this.onYes();
 						this.close();
 					}),
 			);
 	}
-
 	override onClose(): void {
-		if (!this.answered) this.done(false);
 		this.contentEl.empty();
 	}
 }
@@ -421,6 +622,10 @@ class BridgeSettings extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 		const p = this.plugin.prefs;
+		const changed = async () => {
+			await this.plugin.save();
+			this.plugin.renderViews();
+		};
 		const num = (name: string, desc: string, key: "deadlineDays" | "refreshMinutes" | "leadDays" | "nextCount", min: number) =>
 			new Setting(containerEl)
 				.setName(name)
@@ -430,13 +635,63 @@ class BridgeSettings extends PluginSettingTab {
 						const n = Number(v);
 						if (Number.isInteger(n) && n >= min) {
 							p[key] = n;
-							await this.plugin.save();
+							await changed();
 						}
 					}),
 				);
-		num("Deadlines ahead (days)", "The window lists deadlines this many days ahead, besides Today.", "deadlineDays", 1);
-		num("Refresh every (minutes)", "While the window is visible. Things is never read while it's hidden or closed.", "refreshMinutes", 1);
-		num("Start reminder (days before a deadline)", "When you give a to-do a deadline, its When is set this many days earlier. You can change it in each draft.", "leadDays", 0);
+		const toggle = (name: string, desc: string, key: "showToday" | "showDeadlines" | "showProjects" | "areaTabs" | "separateWindows" | "groupsOpen" | "projectsInToday", redraw = false) =>
+			new Setting(containerEl)
+				.setName(name)
+				.setDesc(desc)
+				.addToggle((t) =>
+					t.setValue(p[key]).onChange(async (v) => {
+						p[key] = v;
+						await changed();
+						if (redraw) this.display();
+					}),
+				);
+
+		new Setting(containerEl).setName("Tabs").setHeading();
+		toggle("Today tab", "Today's to-dos: Now, the next few, and the rest grouped.", "showToday");
+		toggle("Deadlines tab", "Every deadline, soonest first, overdue on top.", "showDeadlines");
+		toggle("Projects tab", "All active projects, one tab each.", "showProjects");
+		toggle("A tab for each area", "Each area's projects, one tab each. Each also gets a command, so it can have a hotkey.", "areaTabs", true);
+		if (p.areaTabs) {
+			if (!p.knownAreas.length) containerEl.createDiv({ cls: "setting-item-description", text: "Your areas appear here once Things has been read." });
+			for (const area of p.knownAreas) {
+				new Setting(containerEl).setName(area).setClass("things-bridge-indent").addToggle((t) =>
+					t.setValue(!p.hiddenAreas.includes(area)).onChange(async (v) => {
+						p.hiddenAreas = v ? p.hiddenAreas.filter((a) => a !== area) : [...p.hiddenAreas, area];
+						await changed();
+					}),
+				);
+			}
+		}
+		new Setting(containerEl)
+			.setName("Order of project tabs")
+			.addDropdown((d) =>
+				d
+					.addOptions({ "today-first": "Projects with something today first", things: "Things' own order" })
+					.setValue(p.projectOrder)
+					.onChange(async (v) => {
+						p.projectOrder = v === "things" ? "things" : "today-first";
+						await changed();
+					}),
+			);
+
+		new Setting(containerEl).setName("Windows").setHeading();
+		new Setting(containerEl)
+			.setName("Open Things in")
+			.addDropdown((d) =>
+				d
+					.addOptions({ right: "The right sidebar", main: "A tab in the main area" })
+					.setValue(p.openIn)
+					.onChange(async (v) => {
+						p.openIn = v === "main" ? "main" : "right";
+						await this.plugin.save();
+					}),
+			);
+		toggle("Each tab's command opens its own window", "On: the commands for each tab and area open separate windows, so several can sit side by side. Off: one window that switches tab.", "separateWindows");
 
 		new Setting(containerEl).setName("Today").setHeading();
 		num("Top tasks after Now", "Shown in your Things order, ungrouped, right under Now. The rest of Today is grouped below them.", "nextCount", 0);
@@ -449,63 +704,17 @@ class BridgeSettings extends PluginSettingTab {
 					.setValue(p.groupBy)
 					.onChange(async (v) => {
 						p.groupBy = v as GroupBy;
-						await this.plugin.save();
-						this.plugin.renderViews();
+						await changed();
 					}),
 			);
-		new Setting(containerEl)
-			.setName("Show projects scheduled for today in Today")
-			.setDesc("Off: Today shows just to-dos, and scheduled projects are listed in the projects tab.")
-			.addToggle((t) =>
-				t.setValue(p.projectsInToday).onChange(async (v) => {
-					p.projectsInToday = v;
-					await this.plugin.save();
-					this.plugin.renderViews();
-				}),
-			);
-		const areas = this.plugin.snapshot?.data.areas ?? [];
-		const area = new Setting(containerEl)
-			.setName("Area shown in the Things window")
-			.setDesc("Everything, or one area's to-dos and projects. The filter at the top of the window changes the same setting. For more areas at once, open a window per area from the command palette.");
-		if (areas.length) {
-			area.addDropdown((d) =>
-				d
-					.addOption("", "All areas")
-					.addOptions(Object.fromEntries([...new Set([...areas, ...(p.defaultArea ? [p.defaultArea] : [])])].map((a) => [a, a])))
-					.setValue(p.defaultArea)
-					.onChange(async (v) => {
-						p.defaultArea = v;
-						await this.plugin.save();
-						this.plugin.renderViews();
-					}),
-			);
-		} else {
-			area.addText((t) =>
-				t
-					.setPlaceholder("All areas")
-					.setValue(p.defaultArea)
-					.onChange(async (v) => {
-						p.defaultArea = v.trim();
-						await this.plugin.save();
-						this.plugin.renderViews();
-					}),
-			);
-		}
-		new Setting(containerEl)
-			.setName("Groups start open")
-			.setDesc("Off keeps them folded to their names and counts, so the top tasks stay the focus.")
-			.addToggle((t) =>
-				t.setValue(p.groupsOpen).onChange(async (v) => {
-					p.groupsOpen = v;
-					await this.plugin.save();
-					this.plugin.renderViews();
-				}),
-			);
+		toggle("Groups start open", "Off keeps them folded to their names and counts, so the top tasks stay the focus.", "groupsOpen");
+		toggle("Show projects scheduled for today in Today", "Off: Today shows just to-dos; scheduled projects are marked with a dot on their project tabs.", "projectsInToday");
+		num("Deadlines in Today (days ahead)", "A short list under Today. 0 for none; the deadlines tab lists them all.", "deadlineDays", 0);
 
 		new Setting(containerEl).setName("Projects").setHeading();
 		new Setting(containerEl)
-			.setName("Open project views in")
-			.setDesc("A project's view lists its to-dos: Today, Upcoming, Anytime, and Someday folded away.")
+			.setName("Open a project in its own tab in")
+			.setDesc("From the button on a project's tab, or when its area and the projects tab are both hidden.")
 			.addDropdown((d) =>
 				d
 					.addOptions({ tab: "A new tab", split: "A split beside the current note" })
@@ -516,6 +725,19 @@ class BridgeSettings extends PluginSettingTab {
 					}),
 			);
 
+		new Setting(containerEl).setName("Things").setHeading();
+		num("Refresh every (minutes)", "While a view is visible. Things is never read while it's hidden or closed.", "refreshMinutes", 1);
+		num("Start reminder (days before a deadline)", "When you give a to-do a deadline, its When is set this many days earlier. You can change it in each draft.", "leadDays", 0);
+		const token = new Setting(containerEl)
+			.setName("Things URL token")
+			.setDesc("Only for moving a to-do to this evening from the right-click menu, which Things' scripting can't do. Copy it in Things from the general settings, under the option to enable Things URLs. It's kept in Obsidian's secure storage, never in this plugin's settings file.");
+		token.addComponent((el) =>
+			new SecretComponent(this.app, el).setValue(p.tokenSecret).onChange(async (v) => {
+				p.tokenSecret = (v ?? "").trim() || "things-url-token";
+				await this.plugin.save();
+			}),
+		);
+
 		const status = containerEl.createDiv({ cls: "things-bridge-muted" });
 		new Setting(containerEl)
 			.setName("Check access to Things")
@@ -525,7 +747,8 @@ class BridgeSettings extends PluginSettingTab {
 					status.setText("Asking Things…");
 					try {
 						const s = await this.plugin.read({ maxAge: 0, launch: true });
-						status.setText(`Things answered: ${s.today.length} in Today, ${s.all.length} open to-dos.`);
+						status.setText(`Things answered: ${s.today.length} in Today, ${s.all.length} open to-dos, ${s.areas.length} areas.`);
+						this.display();
 					} catch (e) {
 						status.setText(explain(e));
 					}

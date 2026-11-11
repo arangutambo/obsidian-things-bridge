@@ -61,6 +61,15 @@ export function addProjectUrl(p: { title: string; area: string | null; notes?: s
 	return `things:///add-project?${q.join("&")}`;
 }
 
+/**
+ * Changes a to-do through Things' URL scheme (`update`), which needs the auth token from Things →
+ * Settings → General → Enable Things URLs. Used only for what scripting can't do: This evening.
+ */
+export function updateUrl(id: string, token: string, params: Record<string, string>): string {
+	const q = [`id=${encodeURIComponent(id)}`, `auth-token=${encodeURIComponent(token)}`, ...Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`)];
+	return `things:///update?${q.join("&")}`;
+}
+
 export function showUrl(id: string): string {
 	return `things:///show?id=${encodeURIComponent(id)}`;
 }

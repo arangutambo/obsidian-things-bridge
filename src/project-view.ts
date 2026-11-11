@@ -1,11 +1,9 @@
 import type { ViewStateResult, WorkspaceLeaf } from "obsidian";
 
 import { ThingsBase } from "./base";
-import { localToday } from "./core/dates";
-import { projectTasks } from "./core/groups";
 import type { Snapshot } from "./core/model";
 import type ThingsBridge from "./main";
-import { dayLabel, renderRow } from "./rows";
+import { renderProjectTasks } from "./rows";
 
 export const PROJECT_VIEW_TYPE = "things-bridge-project";
 
@@ -57,34 +55,6 @@ export class ProjectView extends ThingsBase {
 	protected renderBody(c: HTMLElement, s: Snapshot): void {
 		const project = s.projects.find((p) => p.id === this.projectId) ?? s.projects.find((p) => p.title === this.title) ?? null;
 		if (project && project.title !== this.title) this.title = project.title;
-		const meta = c.createDiv({ cls: "things-bridge-meta things-bridge-project-meta" });
-		if (project?.area) meta.createSpan({ text: project.area });
-		if (project?.deadline) meta.createSpan({ cls: "things-bridge-deadline", text: `Project due ${dayLabel(project.deadline)}` });
-		if (project?.someday) meta.createSpan({ text: "In Someday" });
-		if (!project && !s.all.some((t) => t.project === this.title)) {
-			c.createEl("p", { cls: "things-bridge-muted", text: "This project isn't open in Things any more. It may have been completed, renamed or deleted." });
-			return;
-		}
-		const today = localToday();
-		const tasks = projectTasks(s, this.title, today);
-		const section = (title: string, rows: typeof tasks.today, when?: (t: (typeof tasks.today)[number]) => string | undefined) => {
-			if (!rows.length) return;
-			const sec = c.createDiv({ cls: "things-bridge-section" });
-			sec.createEl("h4", { text: `${title} (${rows.length})` });
-			const list = sec.createDiv({ cls: "things-bridge-rows" });
-			for (const t of rows) renderRow(this.plugin, list, t, { hidePlace: true, when: when?.(t) });
-		};
-		section("Today", tasks.today);
-		section("Upcoming", tasks.upcoming, (t) => [t.when ? `Starts ${dayLabel(t.when)}` : null, t.deadline ? `due ${dayLabel(t.deadline)}` : null].filter(Boolean).join(", "));
-		section("Anytime", tasks.anytime);
-		if (tasks.someday.length) {
-			const more = c.createEl("details", { cls: "things-bridge-section" });
-			more.createEl("summary", { text: `Someday (${tasks.someday.length})` });
-			const list = more.createDiv({ cls: "things-bridge-rows" });
-			for (const t of tasks.someday) renderRow(this.plugin, list, t, { hidePlace: true });
-		}
-		if (!tasks.today.length && !tasks.upcoming.length && !tasks.anytime.length && !tasks.someday.length) {
-			c.createEl("p", { cls: "things-bridge-muted", text: "Nothing open in this project." });
-		}
+		renderProjectTasks(this.plugin, c, s, project, this.title);
 	}
 }

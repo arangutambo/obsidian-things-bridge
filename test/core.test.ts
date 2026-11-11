@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { classifyError } from "../src/core/jxa";
+import { actionCall, classifyError } from "../src/core/jxa";
 import { linkedFile, linkedTo, noteLinks, obsidianLink, parseLists, parseSnapshot, placeOf, windowOf } from "../src/core/model";
-import { addProjectUrl, addUrl, courseTags, draftFrom, findProject, startFor } from "../src/core/draft";
+import { addProjectUrl, addUrl, courseTags, draftFrom, findProject, startFor, updateUrl } from "../src/core/draft";
 
 // Shaped like READ_SCRIPT's reply on a real Mac (2026-11-10), with invented content.
 const t = (id: string, extra: Record<string, unknown> = {}) => ({ id, title: `To-do ${id}`, notes: "", when: null, deadline: null, tags: "", project: null, area: null, ...extra });
@@ -57,6 +57,14 @@ describe("reading Things", () => {
 		expect(l.tags).toEqual(["🔬 BIO1000"]);
 	});
 
+	it("sends each right-click action to the script that can do it", () => {
+		expect(actionCall("someday", "Ab1")).toMatchObject({ language: "AppleScript", args: ["Ab1", "TMSomedayListSource"] });
+		expect(actionCall("today", "Ab1").args[1]).toBe("TMTodayListSource");
+		expect(actionCall("deadline", "Ab1")).toMatchObject({ language: "AppleScript", args: ["Ab1"] });
+		expect(actionCall("deadline", "Ab1", "2027-03-01")).toMatchObject({ language: "JavaScript", args: ["deadline", "Ab1", "2027-03-01"] });
+		expect(actionCall("project", "Ab1", "P1").language).toBe("JavaScript");
+		expect(() => actionCall("today", 'x" & do shell script "')).toThrow();
+	});
 	it("explains osascript failures", () => {
 		expect(classifyError("execution error: Not authorized to send Apple events to Things3. (-1743)")).toBe("no-permission");
 		expect(classifyError("execution error: Error: Application can't be found. (-2700)")).toBe("not-installed");
@@ -86,6 +94,7 @@ describe("sending to Things", () => {
 		const url = addUrl({ title: "Pre-read: ECG", notes: "n", list: "🔬 BIO1000", when: "2027-03-17", deadline: "2027-03-20", tags: ["🔬 BIO1000"], checklist: ["Open the slides", "Skim"] });
 		expect(url).toBe("things:///add?title=Pre-read%3A%20ECG&notes=n&when=2027-03-17&deadline=2027-03-20&tags=%F0%9F%94%AC%20BIO1000&list=%F0%9F%94%AC%20BIO1000&checklist-items=Open%20the%20slides%0ASkim");
 		expect(addUrl({ title: "x", notes: "", list: null, when: null, deadline: null, tags: [], checklist: [] })).toBe("things:///add?title=x");
+		expect(updateUrl("Ab1", "t0k/en", { when: "evening" })).toBe("things:///update?id=Ab1&auth-token=t0k%2Fen&when=evening");
 		expect(addProjectUrl({ title: "🩺 MED1", area: "🎓 School" })).toBe("things:///add-project?title=%F0%9F%A9%BA%20MED1&area=%F0%9F%8E%93%20School");
 	});
 

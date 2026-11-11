@@ -89,6 +89,61 @@ function run(argv) {
 	return JSON.stringify({ v: 1, ok: true });
 }`;
 
+/**
+ * The right-click actions that work through JavaScript for Automation, in the background:
+ * argv = [action, id, arg?]. Dates are local YYYY-MM-DD. Moving between Things' lists and clearing
+ * a deadline go through AppleScript instead (see `actionCall`), and "This evening" isn't in
+ * Things' scripting dictionary at all, so it goes by URL.
+ */
+export const ACTION_SCRIPT = `
+function run(argv) {
+	const action = argv[0], id = argv[1], arg = argv[2] || "";
+	if (!/^[A-Za-z0-9-]+$/.test(id)) throw new Error("Not a Things id");
+	if (arg && !/^[A-Za-z0-9 -]+$/.test(arg) && action !== "area") throw new Error("Bad argument");
+	const app = ${APP};
+	const t = app.toDos.byId(id);
+	const day = (s) => { const p = s.split("-").map(Number); return new Date(p[0], p[1] - 1, p[2]); };
+	switch (action) {
+		case "complete": t.status = "completed"; break;
+		case "reopen": t.status = "open"; break;
+		case "cancel": t.status = "canceled"; break;
+		case "date": app.schedule(t, { for: day(arg) }); break;
+		// Never empty here: JXA turns "no date" into 1 Jan 1904. Clearing goes through AppleScript.
+		case "deadline": if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(arg)) throw new Error("No date"); t.dueDate = day(arg); break;
+		case "project": t.project = app.projects.byId(arg); break;
+		case "area": t.area = app.areas.byName(arg); break;
+		case "trash": app.delete(t); break;
+		default: throw new Error("Unknown action " + action);
+	}
+	return JSON.stringify({ v: 1, ok: true });
+}`;
+
+/**
+ * Tested on a real to-do (2026-11-11): JXA's `move` fails for Things' lists ("Can't convert
+ * types"), and JXA can't clear a date. AppleScript does both, addressed by Things' internal list
+ * ids so it works whatever language Things is in.
+ */
+const MOVE_TO_LIST = ["on run argv", 'tell application id "com.culturedcode.ThingsMac" to move to do id (item 1 of argv) to list id (item 2 of argv)', "end run"];
+const CLEAR_DEADLINE = ["on run argv", 'tell application id "com.culturedcode.ThingsMac" to delete due date of to do id (item 1 of argv)', "end run"];
+const LIST_IDS: Record<string, string> = { today: "TMTodayListSource", anytime: "TMNextListSource", someday: "TMSomedayListSource" };
+
+export interface ScriptCall {
+	language: "JavaScript" | "AppleScript";
+	/** One `-e` argument per line. */
+	lines: string[];
+	args: string[];
+}
+
+/** Which script does an action, and with what arguments. Rejects anything that isn't a Things id. */
+export function actionCall(action: TodoAction, id: string, arg = ""): ScriptCall {
+	if (!/^[A-Za-z0-9-]+$/.test(id)) throw new Error("Not a Things id");
+	if (LIST_IDS[action]) return { language: "AppleScript", lines: MOVE_TO_LIST, args: [id, LIST_IDS[action]] };
+	if (action === "deadline" && !arg) return { language: "AppleScript", lines: CLEAR_DEADLINE, args: [id] };
+	return { language: "JavaScript", lines: [ACTION_SCRIPT], args: [action, id, arg] };
+}
+
+export type TodoAction = "complete" | "reopen" | "cancel" | "today" | "anytime" | "someday" | "date" | "deadline" | "project" | "area" | "trash";
+
 export type JxaFailure = "not-mac" | "no-permission" | "not-installed" | "gone" | "timeout" | "other";
 
 /** Turns osascript's error text into something the window can explain. */

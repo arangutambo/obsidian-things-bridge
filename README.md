@@ -8,32 +8,35 @@ nothing changes in Things that you haven't seen, and there are no counters or st
 
 ## The window
 
-Open it from the ribbon or **Open Things window**. It has two tabs, and an area filter at the top:
-show everything, or one area's to-dos and projects. **Open a Things window for one area…** opens
-another window kept to one area, so you can have, say, study and life side by side.
+Open it from the ribbon or **Open Things**. Along the top, a row of tabs that scrolls sideways:
 
-**Today**
+- **Today:** the first to-do in your Things Today shown large ("Now"), the next few in your own
+  order, then the rest grouped the way you choose (by project; area, then project; tag, under its
+  parent tag; or not at all), folded to their names and counts. Then deadlines in the coming days
+  and the to-dos linked to the note you have open. To-dos only: projects scheduled for today are
+  marked on their project tabs (a setting puts them back here if you prefer).
+- **Deadlines:** every deadline, to-dos' and projects' own, soonest first, overdue on top, under a
+  heading per day.
+- **Projects:** all your active projects, one tab each in a second sideways row. Pick one and its
+  to-dos show underneath: Today, Upcoming by start date, Anytime, and Someday folded away.
+- **One tab per area**, with the same second row for that area's projects (and its to-dos that
+  sit in no project).
 
-- **Now:** the first to-do in your Today, in the order you arranged it in Things. Today shows
-  to-dos only; projects scheduled for today are listed in the Projects tab (a setting puts them
-  back among the to-dos if you prefer).
-- **Next:** the few after it (three by default), still in your order.
-- **The rest of today**, grouped the way you choose in settings: by project, by area then project,
-  by tag (under its parent tag), or not at all. Groups start folded to their names and counts, so
-  the top tasks stay the focus; each sits where its first to-do is in Today.
-- **Due in the next 7 days:** deadlines not already in Today.
-- **Linked to this note:** to-dos whose notes link back to the note you have open.
+Tabs show how many to-dos are in Today; a dot marks a project scheduled for today. Every tab has
+its own command (**Open Things: today**, **Open Things: deadlines**, **Open Things: all
+projects**, **Open Things: <area>**), so any of them can have a hotkey. Settings choose which tabs
+show, and whether those commands switch one window or open a window each, so several can sit side
+by side.
 
-**Projects**
-
-Projects scheduled for today first, then every project with to-dos in Today, with how many are in
-Today, how many are open, and the nearest deadline. Click one to open its **project view**: its to-dos under Today, Upcoming
-(by start date), Anytime, and Someday folded away, with a button to add a to-do to it. Other active
-projects are listed by area below. **Open a Things project…** opens any project's view directly.
-
-Tick a to-do to complete it in Things (it stays on screen with an Undo for a few seconds). Click a
-title to show it in Things, a project name to open its view, and the note chip to open the linked
+Tick a to-do to complete it in Things, in the background, with a few seconds to undo. Click a
+title to show it in Things, a project name to open its tab, and the note chip to open the linked
 note.
+
+**Right-click a to-do** for Things' usual actions: When (Today, This evening, Tomorrow, a date,
+Anytime, Someday), add, change or clear a deadline, move to a project or area, show in Things,
+complete, cancel, or move to the Trash (after you confirm). They run in the background, without
+bringing Things forward. This evening needs Things' URL token (see Settings); everything else
+needs nothing.
 
 ## Send to Things
 
@@ -48,13 +51,15 @@ strengthens it, writing it down alone doesn't (Sheeran et al., 2024).
 
 ## Settings
 
-- **Top tasks after Now**, and how the **rest of Today is grouped** (project; area, then project;
-  tag; or Things' plain order). Whether groups **start open**.
-- Whether **projects scheduled for today** also show among Today's to-dos.
-- The **area the window shows** (the filter at the top of the window changes the same setting).
-- Whether **project views** open in a new tab or a split beside your note.
-- How far ahead **deadlines** are listed, how often the window **refreshes** while visible, and the
-  default **start reminder** before a deadline.
+- **Tabs:** Today, Deadlines, Projects, and a tab per area (each area can be left out), and
+  whether project tabs put those with something today first or follow Things' order.
+- **Windows:** open Things in the right sidebar or a main tab, and whether each tab's command opens
+  its own window.
+- **Today:** how many top tasks follow Now, how the rest is grouped, whether groups start open,
+  whether scheduled projects show among the to-dos, and how many days of deadlines it lists.
+- **Things URL token,** only for This evening. In Things: Settings, General, Enable Things URLs,
+  Manage. It's kept in Obsidian's secure storage, never in this plugin's settings file.
+- How often views **refresh** while visible, and the default **start reminder** before a deadline.
 
 ## Permissions, privacy and platforms
 
@@ -71,7 +76,7 @@ strengthens it, writing it down alone doesn't (Sheeran et al., 2024).
 
 ## Requirements
 
-macOS with [Things 3](https://culturedcode.com/things/) for the window. Sending to Things works on
+Obsidian 1.11.4 or later. macOS with [Things 3](https://culturedcode.com/things/) for the window. Sending to Things works on
 every platform Things runs on. Things Bridge is not made by or affiliated with Cultured Code.
 
 ## For plugin developers

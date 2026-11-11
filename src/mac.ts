@@ -1,6 +1,6 @@
 import { Platform } from "obsidian";
 
-import { classifyError, type JxaFailure } from "./core/jxa";
+import { classifyError, type JxaFailure, type ScriptCall } from "./core/jxa";
 
 export class JxaError extends Error {
 	constructor(readonly kind: JxaFailure, message: string) {
@@ -25,11 +25,17 @@ type ExecFile = (
  * child_process is loaded on first use, on the Mac desktop app only, so mobile never touches it.
  */
 export function runJxa(script: string, args: string[] = [], timeout = 20_000): Promise<string> {
+	return runScript({ language: "JavaScript", lines: [script], args }, timeout);
+}
+
+/** Runs a script (JavaScript for Automation or AppleScript) with `osascript`, arguments kept apart. */
+export function runScript(call: ScriptCall, timeout = 20_000): Promise<string> {
 	if (Platform.isDesktop && Platform.isDesktopApp && Platform.isMacOS) {
 		// eslint-disable-next-line @typescript-eslint/no-require-imports -- loaded lazily so mobile never touches it
 		const { execFile } = require("child_process") as { execFile: ExecFile };
 		return new Promise((resolve, reject) => {
-			execFile("osascript", ["-l", "JavaScript", "-e", script, ...args], { timeout, maxBuffer: 20_000_000 }, (error, stdout, stderr) => {
+			const lang = call.language === "JavaScript" ? ["-l", "JavaScript"] : [];
+			execFile("osascript", [...lang, ...call.lines.flatMap((l) => ["-e", l]), ...call.args], { timeout, maxBuffer: 20_000_000 }, (error, stdout, stderr) => {
 				if (error) {
 					const message = stderr || error.message;
 					reject(new JxaError(classifyError(message), message.trim()));
@@ -40,6 +46,22 @@ export function runJxa(script: string, args: string[] = [], timeout = 20_000): P
 		});
 	}
 	return Promise.reject(new JxaError("not-mac", "Reading Things needs the Mac desktop app."));
+}
+
+/**
+ * Opens a things:/// link. On the Mac, `open -g` hands it to Things without bringing Things to the
+ * front, so adding or rescheduling from Obsidian doesn't pull you out of your note.
+ */
+export function openThingsUrl(url: string, background: boolean): void {
+	if (Platform.isDesktop && Platform.isDesktopApp && Platform.isMacOS && background) {
+		// eslint-disable-next-line @typescript-eslint/no-require-imports -- loaded lazily so mobile never touches it
+		const { execFile } = require("child_process") as { execFile: (f: string, a: string[], cb: (e: Error | null) => void) => void };
+		execFile("open", ["-g", url], (error) => {
+			if (error) window.open(url);
+		});
+		return;
+	}
+	window.open(url);
 }
 
 export function explain(e: unknown): string {

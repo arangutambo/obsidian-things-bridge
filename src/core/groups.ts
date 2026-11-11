@@ -152,3 +152,59 @@ export function projectTasks(s: Snapshot, title: string, today: string): Project
 	out.upcoming.sort((a, b) => (a.when as string).localeCompare(b.when as string) || (a.deadline ?? "9").localeCompare(b.deadline ?? "9"));
 	return out;
 }
+
+// ----- tabs -----
+
+export interface ProjectTab {
+	project: Project;
+	/** Its to-dos in Today. */
+	today: number;
+	/** The project itself is scheduled for today. */
+	scheduled: boolean;
+}
+
+/**
+ * The projects a row of tabs shows: every active project (or one area's), Someday left out. With
+ * `todayFirst`, projects with something today come first; otherwise Things' own order.
+ */
+export function projectTabs(s: Snapshot, area: string | null, todayFirst: boolean): ProjectTab[] {
+	const inToday = new Map<string, { today: number; scheduled: boolean }>();
+	for (const t of s.today) {
+		const title = t.isProject ? t.title : t.project;
+		if (!title) continue;
+		const e = inToday.get(title) ?? { today: 0, scheduled: false };
+		if (t.isProject) e.scheduled = true;
+		else e.today++;
+		inToday.set(title, e);
+	}
+	const tabs = s.projects
+		.filter((p) => !p.someday && (area === null || p.area === area))
+		.map((p) => ({ project: p, today: inToday.get(p.title)?.today ?? 0, scheduled: inToday.get(p.title)?.scheduled ?? false }));
+	if (!todayFirst) return tabs;
+	const busy = (t: ProjectTab) => t.scheduled || t.today > 0;
+	return [...tabs.filter(busy), ...tabs.filter((t) => !busy(t))];
+}
+
+/** An area's own to-dos, the ones in no project. */
+export function looseTodos(s: Snapshot, area: string): Todo[] {
+	return s.all.filter((t) => !t.project && t.area === area);
+}
+
+export interface DeadlineItem {
+	date: string;
+	/** Days from today; negative when overdue. */
+	days: number;
+	todo: Todo | null;
+	/** Set when the deadline is a project's own. */
+	project: Project | null;
+}
+
+/** Every deadline, to-dos' and projects', soonest first; overdue ones on top. */
+export function deadlineList(s: Snapshot, today: string): DeadlineItem[] {
+	const day = (d: string) => Math.round((Date.parse(`${d}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+	const items: DeadlineItem[] = [
+		...s.all.filter((t) => t.deadline && !s.someday.has(t.id)).map((t) => ({ date: t.deadline as string, days: day(t.deadline as string), todo: t, project: null })),
+		...s.projects.filter((p) => p.deadline && !p.someday).map((p) => ({ date: p.deadline as string, days: day(p.deadline as string), todo: null, project: p })),
+	];
+	return items.sort((a, b) => a.days - b.days || (a.project ? 0 : 1) - (b.project ? 0 : 1) || (a.todo?.title ?? a.project?.title ?? "").localeCompare(b.todo?.title ?? b.project?.title ?? ""));
+}

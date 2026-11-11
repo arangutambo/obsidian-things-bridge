@@ -105,3 +105,19 @@ describe("projects", () => {
 		expect(p.someday.map((x) => x.id)).toEqual(["i"]);
 	});
 });
+
+describe("tabs and deadlines", () => {
+	it("gives each project a tab, today's first, an area's only on its own tab", async () => {
+		const { projectTabs, looseTodos } = await import("../src/core/groups");
+		const all = projectTabs(s, null, true);
+		expect(all.map((t) => `${t.project.title}:${t.today}${t.scheduled ? "*" : ""}`)).toEqual(["🔬 BIO1000:2", "🎤 Talk:0*", "🩺 MED1:2", "📦 Side:0"]);
+		expect(projectTabs(s, null, false).map((t) => t.project.id)).toEqual(["P1", "P2", "P3", "P4"]);
+		expect(projectTabs(s, "🤑 Work", true).map((t) => t.project.id)).toEqual(["P4"]);
+		expect(looseTodos(s, "🏠 Home").map((t) => t.id)).toEqual(["b"]);
+	});
+	it("lists every deadline in order, projects' own included, Someday left out", async () => {
+		const { deadlineList } = await import("../src/core/groups");
+		const d = deadlineList(s, "2027-03-19");
+		expect(d.map((x) => `${x.date}:${x.days}:${x.project ? x.project.id : x.todo?.id}`)).toEqual(["2027-03-18:-1:P1", "2027-03-20:1:g", "2027-04-01:13:j"]);
+	});
+});
